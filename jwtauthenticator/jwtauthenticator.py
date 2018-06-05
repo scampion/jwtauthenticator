@@ -1,3 +1,6 @@
+import os
+import shutil
+import pwd
 from jupyterhub.handlers import BaseHandler
 from jupyterhub.auth import Authenticator
 from jupyterhub.auth import LocalAuthenticator
@@ -40,15 +43,26 @@ class JSONWebTokenLoginHandler(BaseHandler):
            raise web.HTTPError(401)
 
         username = self.retrieve_username(claims, username_claim_field)
+        username = username.split('@')[0]
+
         user = self.user_from_username(username)
         self.set_login_cookie(user)
-
+        self.copy_allgo_token(claims, username)
         _url = url_path_join(self.hub.server.base_url, 'home')
         next_url = self.get_argument('next', default=False)
         if next_url:
              _url = next_url
 
         self.redirect(_url)
+
+    def copy_allgo_token(self, claims, user):
+        if 'atk' in claims.keys():
+            homedir = pwd.getpwnam(user)[5]
+            fp = os.path.join(homedir, '.allgo_token')
+            with open(fp, 'w') as f:
+                f.write(claims['atk'])
+            shutil.chown(fp, user=user, group=user)
+            os.chmod(fp, 384) #600 octal
 
     @staticmethod
     def verify_jwt_with_claims(token, signing_certificate, audience):
@@ -130,7 +144,7 @@ class JSONWebTokenAuthenticator(Authenticator):
         raise NotImplementedError()
 
 
-class JSONWebTokenLocalAuthenticator(JSONWebTokenAuthenticator, LocalAuthenticator):
+class JSONWebTokenLocalAuthenticator(LocalAuthenticator, JSONWebTokenAuthenticator):
     """
     A version of JSONWebTokenAuthenticator that mixes in local system user creation
     """
