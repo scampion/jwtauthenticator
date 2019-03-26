@@ -66,34 +66,29 @@ class JSONWebTokenLoginHandler(BaseHandler):
         self.redirect(_url)
 
     def copy_allgo_token(self, claims, user):
-        self.add_user(user)
+        self.create(user)
         if 'atk' in claims.keys():
-            homedir = pwd.getpwnam(user)[5]
+            while True:  # wait for system user creation
+                try:
+                    print("Try for user ", user)
+                    homedir = pwd.getpwnam(user)[5]
+                    break
+                except KeyError:
+                    time.sleep(1)
             fp = os.path.join(homedir, '.allgo_token')
             with open(fp, 'w') as f:
                 f.write(claims['atk'])
             shutil.chown(fp, user=user, group=user)
             os.chmod(fp, 384)  # 600 octal
 
-    def add_user(self, name):
-        if self.system_user_exists(name):
-            return
-        else:
-            cmd = ['adduser', '-q', '--gecos', '""', '--disabled-password', shlex.quote(name)]
-            self.log.info("Creating user: %s", ' '.join(cmd))
+    @staticmethod
+    def create(user):
+        try:
+            pwd.getpwnam(user)
+        except KeyError:
+            cmd = ['adduser', '-q', '--gecos', '""', '--disabled-password', shlex.quote(user)]
             p = Popen(cmd, stdout=PIPE, stderr=STDOUT)
             p.wait()
-            if p.returncode:
-                err = p.stdout.read().decode('utf8', 'replace')
-                raise RuntimeError("Failed to create system user %s: %s" % (name, err))
-
-    def system_user_exists(self, user):
-        try:
-            self._getpwnam(user.name)
-        except KeyError:
-            return False
-        else:
-            return True
 
     @staticmethod
     def verify_jwt_with_claims(token, signing_certificate, audience):
