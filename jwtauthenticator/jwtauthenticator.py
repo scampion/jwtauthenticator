@@ -1,6 +1,9 @@
 import os
+import shlex
 import shutil
 import pwd
+from subprocess import Popen
+
 from jupyterhub.handlers import BaseHandler
 from jupyterhub.auth import Authenticator
 from jupyterhub.auth import LocalAuthenticator
@@ -8,6 +11,7 @@ from jupyterhub.utils import url_path_join
 from tornado import gen, web
 from traitlets import Unicode
 from jose import jwt
+
 
 class JSONWebTokenLoginHandler(BaseHandler):
 
@@ -23,24 +27,24 @@ class JSONWebTokenLoginHandler(BaseHandler):
         tokenParam = self.get_argument(param_name, default=False)
 
         if auth_header_content and tokenParam:
-           raise web.HTTPError(400)
+            raise web.HTTPError(400)
         elif auth_header_content:
-           # we should not see "token" as first word in the AUTHORIZATION header, if we do it could mean someone coming in with a stale API token
-           if auth_header_content.split()[0] != "bearer":
-              raise web.HTTPError(403)
-           token = auth_header_content.split()[1]
+            # we should not see "token" as first word in the AUTHORIZATION header, if we do it could mean someone coming in with a stale API token
+            if auth_header_content.split()[0] != "bearer":
+                raise web.HTTPError(403)
+            token = auth_header_content.split()[1]
         elif tokenParam:
-           token = tokenParam
+            token = tokenParam
         else:
-           raise web.HTTPError(401)
+            raise web.HTTPError(401)
 
         claims = "";
         if secret:
-            claims = self.verify_jwt_using_secret(token,secret)
+            claims = self.verify_jwt_using_secret(token, secret)
         elif signing_certificate:
             claims = self.verify_jwt_with_claims(token, signing_certificate, audience)
         else:
-           raise web.HTTPError(401)
+            raise web.HTTPError(401)
 
         username = self.retrieve_username(claims, username_claim_field)
         username = username.split('@')[0]
@@ -51,18 +55,39 @@ class JSONWebTokenLoginHandler(BaseHandler):
         _url = url_path_join(self.hub.server.base_url, 'home')
         next_url = self.get_argument('next', default=False)
         if next_url:
-             _url = next_url
+            _url = next_url
 
         self.redirect(_url)
 
     def copy_allgo_token(self, claims, user):
+        self.add_user(user)
         if 'atk' in claims.keys():
             homedir = pwd.getpwnam(user)[5]
             fp = os.path.join(homedir, '.allgo_token')
             with open(fp, 'w') as f:
                 f.write(claims['atk'])
             shutil.chown(fp, user=user, group=user)
-            os.chmod(fp, 384) #600 octal
+            os.chmod(fp, 384)  # 600 octal
+
+    def add_user(self, name):
+        if self.system_user_exists(name):
+            return
+        else:
+            cmd = ['adduser', '-q', '--gecos', '""', '--disabled-password', shlex.quote(name)]
+            self.log.info("Creating user: %s", ' '.join(cmd))
+            p = Popen(cmd, stdout=PIPE, stderr=STDOUT)
+            p.wait()
+            if p.returncode:
+                err = p.stdout.read().decode('utf8', 'replace')
+                raise RuntimeError("Failed to create system user %s: %s" % (name, err))
+
+    def system_user_exists(self, user):
+        try:
+            self._getpwnam(user.name)
+        except KeyError:
+            return False
+        else:
+            return True
 
     @staticmethod
     def verify_jwt_with_claims(token, signing_certificate, audience):
